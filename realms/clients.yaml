@@ -1,0 +1,86 @@
+# Realm `clients`: client applications (the App, iRecharge).
+# Trusted only by the Banking API's client endpoints; CBA-CORE never trusts this realm.
+
+realm: clients
+displayName: CBA client applications
+enabled: true
+sslRequired: external
+registrationAllowed: false
+bruteForceProtected: true
+accessTokenLifespan: 900
+
+# Scopes decide which kinds of Banking API call a client may make.
+# Which accounts it may touch is decided by the Banking API (ownership), not here.
+clientScopes:
+  - name: customers
+    description: Create, find and update customers; KYC level
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+  - name: accounts
+    description: Open accounts; read details, balances and history
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+  - name: virtual-accounts
+    description: Create, rename and query static and dynamic virtual accounts
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+  - name: transfers
+    description: Intra-bank transfers, service debits, holds
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+  - name: interbank
+    description: Name enquiry, interbank transfer, status query
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "true"
+  - name: banking-api-audience
+    description: Marks tokens as meant for the Banking API
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "false"
+    protocolMappers:
+      - name: banking-api-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        config:
+          included.custom.audience: banking-api
+          access.token.claim: "true"
+          id.token.claim: "false"
+
+clients:
+  - clientId: app
+    name: 1UBank App
+    enabled: true
+    publicClient: false
+    secret: $(env:APP_CLIENT_SECRET)
+    standardFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    fullScopeAllowed: false
+    defaultClientScopes:
+      - banking-api-audience
+      - customers
+      - accounts
+      - virtual-accounts
+      - transfers
+      - interbank
+
+  - clientId: irecharge
+    name: iRecharge
+    enabled: true
+    publicClient: false
+    secret: $(env:IRECHARGE_CLIENT_SECRET)
+    standardFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    fullScopeAllowed: false
+    defaultClientScopes:
+      - banking-api-audience
+      - accounts
+      - virtual-accounts
+      - transfers
+      - interbank

@@ -1,0 +1,9 @@
+# Realm `master`: created by Keycloak itself and used only to sign in to the admin console.
+# Only its look is managed here; its admin users are not.
+
+realm: master
+loginTheme: 1ubank
+adminTheme: 1ubank
+accountTheme: 1ubank
+displayName: 1UBank administration
+displayNameHtml: <div class="kc-logo-text"><span>1UBank</span></div>

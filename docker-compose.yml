@@ -1,0 +1,72 @@
+# Local run of the auth service: PostgreSQL, the auth service, and the
+# realm loader that applies realms/*.yaml. Values come from .env (copy .env.example).
+
+services:
+  auth-db:
+    image: postgres:16.4
+    environment:
+      POSTGRES_DB: ${KC_DB_NAME}
+      POSTGRES_USER: ${KC_DB_USERNAME}
+      POSTGRES_PASSWORD: ${KC_DB_PASSWORD}
+    volumes:
+      - auth-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KC_DB_USERNAME} -d ${KC_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  auth:
+    build: .
+    command: ["start-dev"]
+    environment:
+      # start-dev rebuilds at startup, so the build options are repeated here.
+      KC_DB: postgres
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_DB_URL: jdbc:postgresql://auth-db:5432/${KC_DB_NAME}
+      KC_DB_USERNAME: ${KC_DB_USERNAME}
+      KC_DB_PASSWORD: ${KC_DB_PASSWORD}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+      FINERACT_MIGRATION_API_URL: ${FINERACT_MIGRATION_API_URL}
+      FINERACT_MIGRATION_TENANT: default
+      FINERACT_MIGRATION_TOKEN_URL: http://localhost:8080/realms/cba/protocol/openid-connect/token
+      FINERACT_MIGRATION_CLIENT_ID: user-migrator
+      FINERACT_MIGRATION_CLIENT_SECRET: ${USER_MIGRATOR_SECRET}
+    volumes:
+      # Theme files are mounted so edits show on page refresh (dev mode does not cache themes).
+      - ./themes/1ubank:/opt/keycloak/themes/1ubank:ro
+    ports:
+      - "8180:8080"
+      - "9100:9000"
+    depends_on:
+      auth-db:
+        condition: service_healthy
+
+  realm-loader:
+    image: adorsys/keycloak-config-cli:6.5.1-26
+    environment:
+      KEYCLOAK_URL: http://auth:8080
+      KEYCLOAK_USER: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KEYCLOAK_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+      KEYCLOAK_AVAILABILITYCHECK_ENABLED: "true"
+      KEYCLOAK_AVAILABILITYCHECK_TIMEOUT: 180s
+      IMPORT_FILES_LOCATIONS: /config/*.yaml
+      IMPORT_VARSUBSTITUTION_ENABLED: "true"
+      PORTAL_URL: ${PORTAL_URL}
+      BANKING_API_CLIENT_SECRET: ${BANKING_API_CLIENT_SECRET}
+      PAYMENTS_CLIENT_SECRET: ${PAYMENTS_CLIENT_SECRET}
+      COMPLIANCE_CLIENT_SECRET: ${COMPLIANCE_CLIENT_SECRET}
+      USER_PROVISIONER_SECRET: ${USER_PROVISIONER_SECRET}
+      USER_MIGRATOR_SECRET: ${USER_MIGRATOR_SECRET}
+      FINERACT_MIGRATION_ENABLED: ${FINERACT_MIGRATION_ENABLED}
+      APP_CLIENT_SECRET: ${APP_CLIENT_SECRET}
+      IRECHARGE_CLIENT_SECRET: ${IRECHARGE_CLIENT_SECRET}
+    volumes:
+      - ./realms:/config:ro
+    depends_on:
+      - auth
+
+volumes:
+  auth-db-data:

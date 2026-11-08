@@ -1,0 +1,228 @@
+# Realm `cba`: staff and the platform's own services.
+# Trusted by CBA-CORE (Fineract OIDC federation) and by the Banking API's staff endpoints.
+
+realm: cba
+displayName: 1UBank
+displayNameHtml: <div class="kc-logo-text"><span>1UBank</span></div>
+enabled: true
+sslRequired: external
+registrationAllowed: false
+resetPasswordAllowed: true
+bruteForceProtected: true
+failureFactor: 5
+accessTokenLifespan: 900
+ssoSessionIdleTimeout: 1800
+ssoSessionMaxLifespan: 36000
+loginTheme: 1ubank
+accountTheme: 1ubank
+# Staff usernames come from Fineract, where admins can change them.
+editUsernameAllowed: true
+
+# Staff must set up an authenticator app at first login, so every staff login uses MFA.
+otpPolicyType: totp
+otpPolicyAlgorithm: HmacSHA1
+otpPolicyDigits: 6
+otpPolicyPeriod: 30
+requiredActions:
+  - alias: CONFIGURE_TOTP
+    name: Configure OTP
+    providerId: CONFIGURE_TOTP
+    enabled: true
+    defaultAction: true
+    priority: 10
+
+clientScopes:
+  # Claims CBA-CORE needs: the tenant, and an audience naming CBA-CORE.
+  # Only the portal (staff) and the Banking API get this scope.
+  - name: fineract
+    description: Claims CBA-CORE needs to resolve the tenant and the Fineract user
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "false"
+    protocolMappers:
+      - name: fineract-tenant
+        protocol: openid-connect
+        protocolMapper: oidc-hardcoded-claim-mapper
+        config:
+          claim.name: fineract_tenant
+          claim.value: default
+          jsonType.label: String
+          access.token.claim: "true"
+          id.token.claim: "true"
+          userinfo.token.claim: "true"
+      - name: cba-core-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        config:
+          included.custom.audience: cba-core
+          access.token.claim: "true"
+          id.token.claim: "false"
+
+  # One audience scope per service that receives calls, so each token names
+  # only the services its caller may talk to.
+  - name: banking-api-audience
+    description: Token may be used on the Banking API
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "false"
+    protocolMappers:
+      - name: banking-api-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        config:
+          included.custom.audience: banking-api
+          access.token.claim: "true"
+          id.token.claim: "false"
+  - name: payments-audience
+    description: Token may be used on Payments
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "false"
+    protocolMappers:
+      - name: payments-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        config:
+          included.custom.audience: payments
+          access.token.claim: "true"
+          id.token.claim: "false"
+  - name: compliance-audience
+    description: Token may be used on Compliance
+    protocol: openid-connect
+    attributes:
+      include.in.token.scope: "false"
+    protocolMappers:
+      - name: compliance-audience
+        protocol: openid-connect
+        protocolMapper: oidc-audience-mapper
+        config:
+          included.custom.audience: compliance
+          access.token.claim: "true"
+          id.token.claim: "false"
+
+clients:
+  # Back-office portal: staff sign in through the browser (authorization code with PKCE).
+  - clientId: portal
+    name: Back-office portal
+    enabled: true
+    publicClient: true
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: false
+    implicitFlowEnabled: false
+    redirectUris:
+      - $(env:PORTAL_URL)/*
+    webOrigins:
+      - $(env:PORTAL_URL)
+    attributes:
+      pkce.code.challenge.method: S256
+      post.logout.redirect.uris: $(env:PORTAL_URL)/*
+    defaultClientScopes:
+      - profile
+      - email
+      - fineract
+      - banking-api-audience
+
+  # Platform services: machine-to-machine (client credentials).
+  # Fineract maps each one to the user `service-account-<clientId>`.
+  - clientId: banking-api
+    name: Banking API
+    enabled: true
+    publicClient: false
+    secret: $(env:BANKING_API_CLIENT_SECRET)
+    standardFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    fullScopeAllowed: false
+    defaultClientScopes:
+      - profile
+      - fineract
+      - payments-audience
+      - compliance-audience
+
+  - clientId: payments
+    name: Payments
+    enabled: true
+    publicClient: false
+    secret: $(env:PAYMENTS_CLIENT_SECRET)
+    standardFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    fullScopeAllowed: false
+    defaultClientScopes:
+      - profile
+      - banking-api-audience
+
+  - clientId: compliance
+    name: Compliance
+    enabled: true
+    publicClient: false
+    secret: $(env:COMPLIANCE_CLIENT_SECRET)
+    standardFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    fullScopeAllowed: false
+    defaultClientScopes:
+      - profile
+      - banking-api-audience
+
+  # Used by CBA-CORE to keep staff users here in step with Fineract users:
+  # created, updated and disabled when an admin changes them in the portal.
+  - clientId: user-provisioner
+    name: CBA-CORE user provisioner
+    enabled: true
+    publicClient: false
+    secret: $(env:USER_PROVISIONER_SECRET)
+    standardFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    fullScopeAllowed: false
+    defaultClientScopes: []
+
+  # Used by the first-login migration plugin to call CBA-CORE's staff-migration endpoints.
+  # CBA-CORE needs a Fineract user named service-account-user-migrator (no roles needed).
+  - clientId: user-migrator
+    name: First-login migration
+    enabled: true
+    publicClient: false
+    secret: $(env:USER_MIGRATOR_SECRET)
+    standardFlowEnabled: false
+    directAccessGrantsEnabled: false
+    serviceAccountsEnabled: true
+    fullScopeAllowed: false
+    defaultClientScopes:
+      - fineract
+
+# Existing Fineract staff are moved into this realm at their first login, keeping their password.
+# Switched on with FINERACT_MIGRATION_ENABLED while staff are moving across.
+components:
+  org.keycloak.storage.UserStorageProvider:
+    - name: fineract-user-migration
+      providerId: fineract-user-migration
+      subComponents: {}
+      config:
+        enabled:
+          - $(env:FINERACT_MIGRATION_ENABLED:-false)
+        priority:
+          - "0"
+        cachePolicy:
+          - DEFAULT
+
+users:
+  - username: service-account-user-provisioner
+    enabled: true
+    serviceAccountClientId: user-provisioner
+    clientRoles:
+      realm-management:
+        - manage-users
+        - view-users
+        - query-users
+
+# With full scope off, a token carries only the roles mapped here.
+clientScopeMappings:
+  realm-management:
+    - client: user-provisioner
+      roles:
+        - manage-users
+        - view-users
+        - query-users

@@ -1,0 +1,66 @@
+/*
+ * 1UBank sign-in theme for the auth service.
+ *
+ * Keycloak's keycloak.v2 login page with 1UBank's logo and colours. It is deliberately
+ * plainer than the back-office portal's own login screen: a single sign-in card, so staff
+ * can tell the sign-in step apart from the portal itself.
+ */
+
+:root {
+  --ub-blue: #2237b3;
+  --ub-blue-800: #18288a;
+  --ub-blue-950: #0a1350;
+  --ub-ink: #0e1430;
+  --ub-ink-2: #4a5272;
+  --ub-surface: #f5f6fb;
+  --ub-border: #e0e3f0;
+  --ub-font: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+
+  --keycloak-logo-url: url('../img/logo-horizontal.svg');
+  --keycloak-logo-height: 44px;
+  --keycloak-logo-width: 190px;
+  --keycloak-card-top-color: var(--ub-blue);
+
+  --pf-v5-global--FontFamily--text: var(--ub-font);
+  --pf-v5-global--FontFamily--heading: var(--ub-font);
+  --pf-v5-global--primary-color--100: var(--ub-blue);
+  --pf-v5-global--primary-color--200: var(--ub-blue-800);
+  --pf-v5-global--link--Color: var(--ub-blue);
+  --pf-v5-global--link--Color--hover: var(--ub-blue-800);
+  --pf-v5-c-button--m-primary--BackgroundColor: var(--ub-blue);
+  --pf-v5-c-button--m-primary--hover--BackgroundColor: var(--ub-blue-800);
+  --pf-v5-c-button--m-primary--focus--BackgroundColor: var(--ub-blue-800);
+  --pf-v5-c-button--m-primary--active--BackgroundColor: var(--ub-blue-950);
+}
+
+/* Plain light background instead of Keycloak's dark artwork. */
+.login-pf body {
+  background: var(--ub-surface);
+  font-family: var(--ub-font);
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-v5-c-login__container {
+  grid-template-columns: minmax(0, 28rem);
+}
+
+.pf-v5-c-login__header {
+  padding-block-end: 1.5rem;
+}
+
+.pf-v5-c-login__main {
+  border: 1px solid var(--ub-border);
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgb(10 19 80 / 10%);
+  overflow: hidden;
+}
+
+.pf-v5-c-login__main-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--ub-ink);
+}
+
+.pf-v5-c-login__main-footer-band {
+  color: var(--ub-ink-2);
+}
