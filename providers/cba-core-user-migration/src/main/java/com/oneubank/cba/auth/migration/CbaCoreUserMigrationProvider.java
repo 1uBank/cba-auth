@@ -4,6 +4,7 @@ import org.jboss.logging.Logger;
 import org.keycloak.component.ComponentModel;
 import org.keycloak.credential.CredentialInput;
 import org.keycloak.credential.CredentialInputValidator;
+import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserCredentialModel;
@@ -27,19 +28,19 @@ import org.keycloak.storage.user.UserRegistrationProvider;
  *
  * New staff never pass through here: CBA-CORE creates them in the realm directly when an admin adds them.
  */
-public class FineractUserMigrationProvider
+public class CbaCoreUserMigrationProvider
         implements UserStorageProvider, UserLookupProvider, UserRegistrationProvider, CredentialInputValidator {
 
-    private static final Logger LOG = Logger.getLogger(FineractUserMigrationProvider.class);
+    private static final Logger LOG = Logger.getLogger(CbaCoreUserMigrationProvider.class);
 
     private final KeycloakSession session;
     private final ComponentModel model;
-    private final FineractMigrationClient fineract;
+    private final CbaCoreMigrationClient cbaCore;
 
-    FineractUserMigrationProvider(KeycloakSession session, ComponentModel model, FineractMigrationClient fineract) {
+    CbaCoreUserMigrationProvider(KeycloakSession session, ComponentModel model, CbaCoreMigrationClient cbaCore) {
         this.session = session;
         this.model = model;
-        this.fineract = fineract;
+        this.cbaCore = cbaCore;
     }
 
     @Override
@@ -48,7 +49,11 @@ public class FineractUserMigrationProvider
         if (local.getUserByUsername(realm, username) != null) {
             return null;
         }
-        return fineract.find(username).map(staff -> {
+        String secret = migratorSecret(realm);
+        if (secret == null) {
+            return null;
+        }
+        return cbaCore.find(username, secret).map(staff -> {
             UserModel user = local.addUser(realm, staff.username());
             user.setEnabled(true);
             user.setEmail(staff.email());
@@ -70,7 +75,7 @@ public class FineractUserMigrationProvider
 
     @Override
     public UserModel getUserByEmail(RealmModel realm, String email) {
-        // Staff sign in with their Fineract username, so only lookups by username are migrated.
+        // Staff sign in with their CBA-CORE username, so only lookups by username are migrated.
         return null;
     }
 
@@ -89,7 +94,8 @@ public class FineractUserMigrationProvider
         if (!supportsCredentialType(input.getType()) || !model.getId().equals(user.getFederationLink())) {
             return false;
         }
-        if (!fineract.verifyPassword(user.getUsername(), input.getChallengeResponse())) {
+        String secret = migratorSecret(realm);
+        if (secret == null || !cbaCore.verifyPassword(user.getUsername(), input.getChallengeResponse(), secret)) {
             return false;
         }
         user.setFederationLink(null);
@@ -108,6 +114,17 @@ public class FineractUserMigrationProvider
     public boolean removeUser(RealmModel realm, UserModel user) {
         // Lets an admin delete a staff user who has not finished migrating. Nothing is removed from CBA-CORE.
         return true;
+    }
+
+    /** The secret the realm holds for the migrator client, read on each use so a regenerated secret applies at once. */
+    private String migratorSecret(RealmModel realm) {
+        ClientModel client = session.clients().getClientByClientId(realm, cbaCore.clientId());
+        if (client == null || client.getSecret() == null) {
+            LOG.warnf("First-login migration is on, but realm %s has no %s client with a secret", realm.getName(),
+                    cbaCore.clientId());
+            return null;
+        }
+        return client.getSecret();
     }
 
     @Override

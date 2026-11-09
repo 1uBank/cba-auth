@@ -56,7 +56,6 @@ clients:
     name: 1UBank App
     enabled: true
     publicClient: false
-    secret: $(env:APP_CLIENT_SECRET)
     standardFlowEnabled: false
     directAccessGrantsEnabled: false
     serviceAccountsEnabled: true
@@ -73,7 +72,6 @@ clients:
     name: iRecharge
     enabled: true
     publicClient: false
-    secret: $(env:IRECHARGE_CLIENT_SECRET)
     standardFlowEnabled: false
     directAccessGrantsEnabled: false
     serviceAccountsEnabled: true

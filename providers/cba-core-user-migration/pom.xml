@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Auth service plugin: moves existing Fineract staff into the cba realm at their first login,
-  keeping their current Fineract password. Built into the auth service image by the Dockerfile.
+  Auth service plugin: moves existing CBA-CORE staff into the cba realm at their first login,
+  keeping their current CBA-CORE password. Built into the auth service image by the Dockerfile.
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -9,7 +9,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.oneubank.cba.auth</groupId>
-    <artifactId>fineract-user-migration</artifactId>
+    <artifactId>cba-core-user-migration</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
 
@@ -54,6 +54,6 @@
     </dependencies>
 
     <build>
-        <finalName>fineract-user-migration</finalName>
+        <finalName>cba-core-user-migration</finalName>
     </build>
 </project>

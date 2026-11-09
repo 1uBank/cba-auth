@@ -17,11 +17,13 @@ import org.keycloak.util.JsonSerialization;
 
 /**
  * Calls CBA-CORE's staff-migration endpoints ({@code /v1/oneubank/staff-migration}). Signs in to the cba realm as the
- * {@code user-migrator} client; CBA-CORE accepts those calls only from that client's Fineract user.
+ * {@code user-migrator} client, with the secret the realm holds for it (passed in by the caller, so a secret regenerated
+ * in the admin console takes effect without a restart); CBA-CORE accepts those calls only from that client's CBA-CORE
+ * user.
  */
-final class FineractMigrationClient {
+final class CbaCoreMigrationClient {
 
-    private static final Logger LOG = Logger.getLogger(FineractMigrationClient.class);
+    private static final Logger LOG = Logger.getLogger(CbaCoreMigrationClient.class);
 
     private final MigrationSettings settings;
     private final HttpClient http;
@@ -29,15 +31,15 @@ final class FineractMigrationClient {
     private String accessToken;
     private Instant accessTokenExpiry = Instant.EPOCH;
 
-    FineractMigrationClient(MigrationSettings settings) {
+    CbaCoreMigrationClient(MigrationSettings settings) {
         this.settings = settings;
         this.http = HttpClient.newBuilder().connectTimeout(settings.timeout()).build();
     }
 
     /** The staff member as CBA-CORE holds them, if they exist and may be migrated. */
-    Optional<FineractStaff> find(String username) {
+    Optional<CbaCoreStaff> find(String username, String clientSecret) {
         try {
-            HttpResponse<String> response = send(request("/staff-migration/" + encode(username)).GET());
+            HttpResponse<String> response = send(request("/staff-migration/" + encode(username), clientSecret).GET());
             if (response.statusCode() == 404) {
                 return Optional.empty();
             }
@@ -46,7 +48,7 @@ final class FineractMigrationClient {
                 return Optional.empty();
             }
             JsonNode body = JsonSerialization.readValue(response.body(), JsonNode.class);
-            return Optional.of(new FineractStaff(text(body, "username"), text(body, "email"), text(body, "firstName"),
+            return Optional.of(new CbaCoreStaff(text(body, "username"), text(body, "email"), text(body, "firstName"),
                     text(body, "lastName")));
         } catch (IOException e) {
             LOG.warnf("Could not reach CBA-CORE to look up staff user %s for migration: %s", username, e.getMessage());
@@ -55,10 +57,10 @@ final class FineractMigrationClient {
     }
 
     /** Whether the password matches the one CBA-CORE holds for this staff member. */
-    boolean verifyPassword(String username, String password) {
+    boolean verifyPassword(String username, String password, String clientSecret) {
         try {
             String body = JsonSerialization.writeValueAsString(Map.of("password", password));
-            HttpResponse<String> response = send(request("/staff-migration/" + encode(username) + "/verify")
+            HttpResponse<String> response = send(request("/staff-migration/" + encode(username) + "/verify", clientSecret)
                     .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)));
             if (response.statusCode() != 200) {
                 LOG.warnf("CBA-CORE returned %d when checking the password of staff user %s", response.statusCode(), username);
@@ -72,9 +74,14 @@ final class FineractMigrationClient {
         }
     }
 
-    private HttpRequest.Builder request(String path) throws IOException {
-        return HttpRequest.newBuilder(URI.create(settings.fineractApiUrl() + path)).timeout(settings.timeout())
-                .header("Authorization", "Bearer " + accessToken()).header("Fineract-Platform-TenantId", settings.fineractTenant())
+    /** The client this signs in as, whose secret callers pass in. */
+    String clientId() {
+        return settings.clientId();
+    }
+
+    private HttpRequest.Builder request(String path, String clientSecret) throws IOException {
+        return HttpRequest.newBuilder(URI.create(settings.apiUrl() + path)).timeout(settings.timeout())
+                .header("Authorization", "Bearer " + accessToken(clientSecret)).header("Fineract-Platform-TenantId", settings.tenant())
                 .header("Accept", "application/json");
     }
 
@@ -87,12 +94,12 @@ final class FineractMigrationClient {
         }
     }
 
-    private synchronized String accessToken() throws IOException {
+    private synchronized String accessToken(String clientSecret) throws IOException {
         if (accessToken != null && Instant.now().isBefore(accessTokenExpiry)) {
             return accessToken;
         }
         String form = "grant_type=client_credentials&client_id=" + encode(settings.clientId()) + "&client_secret="
-                + encode(settings.clientSecret());
+                + encode(clientSecret);
         HttpRequest tokenRequest = HttpRequest.newBuilder(URI.create(settings.tokenUrl())).timeout(settings.timeout())
                 .header("Content-Type", "application/x-www-form-urlencoded").POST(HttpRequest.BodyPublishers.ofString(form)).build();
         HttpResponse<String> response;
@@ -120,10 +127,9 @@ final class FineractMigrationClient {
         return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
-    record FineractStaff(String username, String email, String firstName, String lastName) {
+    record CbaCoreStaff(String username, String email, String firstName, String lastName) {
     }
 
-    record MigrationSettings(String fineractApiUrl, String fineractTenant, String tokenUrl, String clientId, String clientSecret,
-            Duration timeout) {
+    record MigrationSettings(String apiUrl, String tenant, String tokenUrl, String clientId, Duration timeout) {
     }
 }

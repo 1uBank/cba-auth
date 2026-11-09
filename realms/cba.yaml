@@ -1,5 +1,5 @@
 # Realm `cba`: staff and the platform's own services.
-# Trusted by CBA-CORE (Fineract OIDC federation) and by the Banking API's staff endpoints.
+# Trusted by CBA-CORE (its OIDC federation) and by the Banking API's staff endpoints.
 
 realm: cba
 displayName: 1UBank
@@ -15,7 +15,7 @@ ssoSessionIdleTimeout: 1800
 ssoSessionMaxLifespan: 36000
 loginTheme: 1ubank
 accountTheme: 1ubank
-# Staff usernames come from Fineract, where admins can change them.
+# Staff usernames come from CBA-CORE, where admins can change them.
 editUsernameAllowed: true
 
 # Staff must set up an authenticator app at first login, so every staff login uses MFA.
@@ -34,17 +34,18 @@ requiredActions:
 clientScopes:
   # Claims CBA-CORE needs: the tenant, and an audience naming CBA-CORE.
   # Only the portal (staff) and the Banking API get this scope.
-  - name: fineract
-    description: Claims CBA-CORE needs to resolve the tenant and the Fineract user
+  - name: cba-core
+    description: Claims CBA-CORE needs to resolve the tenant and the CBA-CORE user
     protocol: openid-connect
     attributes:
       include.in.token.scope: "false"
     protocolMappers:
-      - name: fineract-tenant
+      - name: cba-tenant
         protocol: openid-connect
         protocolMapper: oidc-hardcoded-claim-mapper
         config:
-          claim.name: fineract_tenant
+          # CBA-CORE reads it through FINERACT_SECURITY_OIDC_TENANT_CLAIM=cba_tenant.
+          claim.name: cba_tenant
           claim.value: default
           jsonType.label: String
           access.token.claim: "true"
@@ -120,23 +121,22 @@ clients:
     defaultClientScopes:
       - profile
       - email
-      - fineract
+      - cba-core
       - banking-api-audience
 
   # Platform services: machine-to-machine (client credentials).
-  # Fineract maps each one to the user `service-account-<clientId>`.
+  # CBA-CORE maps each one to the user `service-account-<clientId>`.
   - clientId: banking-api
     name: Banking API
     enabled: true
     publicClient: false
-    secret: $(env:BANKING_API_CLIENT_SECRET)
     standardFlowEnabled: false
     directAccessGrantsEnabled: false
     serviceAccountsEnabled: true
     fullScopeAllowed: false
     defaultClientScopes:
       - profile
-      - fineract
+      - cba-core
       - payments-audience
       - compliance-audience
 
@@ -144,7 +144,6 @@ clients:
     name: Payments
     enabled: true
     publicClient: false
-    secret: $(env:PAYMENTS_CLIENT_SECRET)
     standardFlowEnabled: false
     directAccessGrantsEnabled: false
     serviceAccountsEnabled: true
@@ -157,7 +156,6 @@ clients:
     name: Compliance
     enabled: true
     publicClient: false
-    secret: $(env:COMPLIANCE_CLIENT_SECRET)
     standardFlowEnabled: false
     directAccessGrantsEnabled: false
     serviceAccountsEnabled: true
@@ -166,13 +164,12 @@ clients:
       - profile
       - banking-api-audience
 
-  # Used by CBA-CORE to keep staff users here in step with Fineract users:
+  # Used by CBA-CORE to keep staff users here in step with its own users:
   # created, updated and disabled when an admin changes them in the portal.
   - clientId: user-provisioner
     name: CBA-CORE user provisioner
     enabled: true
     publicClient: false
-    secret: $(env:USER_PROVISIONER_SECRET)
     standardFlowEnabled: false
     directAccessGrantsEnabled: false
     serviceAccountsEnabled: true
@@ -180,29 +177,31 @@ clients:
     defaultClientScopes: []
 
   # Used by the first-login migration plugin to call CBA-CORE's staff-migration endpoints.
-  # CBA-CORE needs a Fineract user named service-account-user-migrator (no roles needed).
+  # CBA-CORE needs a user named service-account-user-migrator (no roles needed).
   - clientId: user-migrator
     name: First-login migration
     enabled: true
     publicClient: false
-    secret: $(env:USER_MIGRATOR_SECRET)
     standardFlowEnabled: false
     directAccessGrantsEnabled: false
     serviceAccountsEnabled: true
     fullScopeAllowed: false
+    # profile puts preferred_username (service-account-user-migrator) in the token; CBA-CORE maps the token to
+    # its user by that name.
     defaultClientScopes:
-      - fineract
+      - profile
+      - cba-core
 
-# Existing Fineract staff are moved into this realm at their first login, keeping their password.
-# Switched on with FINERACT_MIGRATION_ENABLED while staff are moving across.
+# Existing CBA-CORE staff are moved into this realm at their first login, keeping their password.
+# Switched on with CBA_CORE_MIGRATION_ENABLED.
 components:
   org.keycloak.storage.UserStorageProvider:
-    - name: fineract-user-migration
-      providerId: fineract-user-migration
+    - name: cba-core-user-migration
+      providerId: cba-core-user-migration
       subComponents: {}
       config:
         enabled:
-          - $(env:FINERACT_MIGRATION_ENABLED:-false)
+          - $(env:CBA_CORE_MIGRATION_ENABLED:-false)
         priority:
           - "0"
         cachePolicy:
