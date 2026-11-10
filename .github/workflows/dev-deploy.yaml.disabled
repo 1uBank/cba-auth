@@ -1,0 +1,116 @@
+name: cba-auth-dev
+
+on:
+  push:
+    branches: [dev]
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: cba-auth-dev
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  AUTH_ECR_REPO: cba-auth-api
+  LOADER_ECR_REPO: cba-auth-realm-loader
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+  AUTH_SERVICE: ${{ vars.AUTH_SERVICE }}
+  AUTH_TASK_FAMILY: ${{ vars.AUTH_TASK_FAMILY }}
+  AUTH_CONTAINER: ${{ vars.AUTH_CONTAINER }}
+  LOADER_TASK_FAMILY: ${{ vars.LOADER_TASK_FAMILY }}
+  LOADER_CONTAINER: ${{ vars.LOADER_CONTAINER }}
+
+jobs:
+  check-plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: providers/cba-core-user-migration/pom.xml
+      - run: mvn -B -f providers/cba-core-user-migration/pom.xml verify
+
+  deploy:
+    needs: check-plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push images
+        id: img
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/$AUTH_ECR_REPO:$TAG .
+          docker push $REGISTRY/$AUTH_ECR_REPO:$TAG
+          docker build -f Dockerfile.realm-loader -t $REGISTRY/$LOADER_ECR_REPO:$TAG .
+          docker push $REGISTRY/$LOADER_ECR_REPO:$TAG
+          echo "auth=$REGISTRY/$AUTH_ECR_REPO:$TAG" >> $GITHUB_OUTPUT
+          echo "loader=$REGISTRY/$LOADER_ECR_REPO:$TAG" >> $GITHUB_OUTPUT
+
+    
+      - name: Get auth task definition
+        run: |
+          aws ecs describe-task-definition --task-definition $AUTH_TASK_FAMILY \
+            --query taskDefinition > auth-td.json
+
+      - id: render-auth
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: auth-td.json
+          container-name: ${{ env.AUTH_CONTAINER }}
+          image: ${{ steps.img.outputs.auth }}
+
+      - uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-auth.outputs.task-definition }}
+          service: ${{ env.AUTH_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Get loader task definition
+        run: |
+          aws ecs describe-task-definition --task-definition $LOADER_TASK_FAMILY \
+            --query taskDefinition > loader-td.json
+
+      - id: render-loader
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: loader-td.json
+          container-name: ${{ env.LOADER_CONTAINER }}
+          image: ${{ steps.img.outputs.loader }}
+
+      - name: Register loader task definition and run it
+        env:
+          TD_FILE: ${{ steps.render-loader.outputs.task-definition }}
+        run: |
+          TD_ARN=$(aws ecs register-task-definition --cli-input-json file://$TD_FILE \
+            --query taskDefinition.taskDefinitionArn --output text)
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster $ECS_CLUSTER --launch-type FARGATE \
+            --task-definition $TD_ARN \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ vars.PRIVATE_SUBNETS }}],securityGroups=[${{ vars.LOADER_SG }}],assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+
+          aws ecs wait tasks-stopped --cluster $ECS_CLUSTER --tasks $TASK_ARN
+
+          EXIT=$(aws ecs describe-tasks --cluster $ECS_CLUSTER --tasks $TASK_ARN \
+            --query "tasks[0].containers[?name=='$LOADER_CONTAINER'].exitCode | [0]" --output text)
+          echo "realm-loader exit code: $EXIT"
+          [ "$EXIT" = "0" ]
