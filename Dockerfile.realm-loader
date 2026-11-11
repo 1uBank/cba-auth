@@ -1,0 +1,16 @@
+# Realm loader for the CBA auth service.
+# keycloak-config-cli with our realm files baked in, so the same image runs
+# locally (docker compose) and on ECS Fargate, where bind mounts do not exist.
+# Per-environment values (KEYCLOAK_URL, KEYCLOAK_USER, KEYCLOAK_PASSWORD,
+# PORTAL_URL, CBA_CORE_MIGRATION_ENABLED) are set on the container, not here.
+
+ARG CONFIG_CLI_VERSION=6.5.1-26
+FROM adorsys/keycloak-config-cli:${CONFIG_CLI_VERSION}
+
+COPY realms/ /config/
+
+# Fixed settings, the same on every environment.
+ENV IMPORT_FILES_LOCATIONS=/config/*.yaml \
+    IMPORT_VARSUBSTITUTION_ENABLED=true \
+    KEYCLOAK_AVAILABILITYCHECK_ENABLED=true \
+    KEYCLOAK_AVAILABILITYCHECK_TIMEOUT=180s
