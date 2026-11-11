@@ -1,8 +1,9 @@
-name: cba-auth-dev
+name: CBA Auth dev ECS CI/CD Pipeline
 
 on:
   push:
-    branches: [dev]
+    branches:
+      - dev
 
 permissions:
   id-token: write
@@ -13,99 +14,140 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: us-east-1
-  AUTH_ECR_REPO: cba-auth-api
-  LOADER_ECR_REPO: cba-auth-realm-loader
-  ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
-  AUTH_SERVICE: ${{ vars.AUTH_SERVICE }}
-  AUTH_TASK_FAMILY: ${{ vars.AUTH_TASK_FAMILY }}
-  AUTH_CONTAINER: ${{ vars.AUTH_CONTAINER }}
-  LOADER_TASK_FAMILY: ${{ vars.LOADER_TASK_FAMILY }}
-  LOADER_CONTAINER: ${{ vars.LOADER_CONTAINER }}
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_ROLE_ARN: arn:aws:iam::612457065814:role/github-actions-deploy
+  AUTH_ECR_REPOSITORY: cba-core-dev-auth-api
+  LOADER_ECR_REPOSITORY: cba-core-dev-auth-realm-loader
+  ECS_CLUSTER: cba-core-dev
+  AUTH_SERVICE: cba-core-dev-auth
+  AUTH_TASK_FAMILY: cba-core-dev-auth
+  AUTH_CONTAINER: cba-auth
+  LOADER_TASK_FAMILY: cba-core-dev-auth-realm-loader
+  LOADER_CONTAINER: realm-loader
 
 jobs:
-  check-plugin:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Use Java
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
           cache: maven
           cache-dependency-path: providers/cba-core-user-migration/pom.xml
-      - run: mvn -B -f providers/cba-core-user-migration/pom.xml verify
 
-  deploy:
-    needs: check-plugin
+      - id: build
+        name: Build and verify plugin
+        run: mvn -B -f providers/cba-core-user-migration/pom.xml verify
+
+  push-to-ecr:
     runs-on: ubuntu-latest
+    needs: build
+    outputs:
+      auth-image: ${{ steps.push-to-ecr.outputs.auth }}
+      loader-image: ${{ steps.push-to-ecr.outputs.loader }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
 
-      - id: ecr
+      - name: Login to Amazon ECR Registry
+        id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push images
-        id: img
+      - id: push-to-ecr
+        name: Build and push images
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
           TAG: ${{ github.sha }}
         run: |
-          docker build -t $REGISTRY/$AUTH_ECR_REPO:$TAG .
-          docker push $REGISTRY/$AUTH_ECR_REPO:$TAG
-          docker build -f Dockerfile.realm-loader -t $REGISTRY/$LOADER_ECR_REPO:$TAG .
-          docker push $REGISTRY/$LOADER_ECR_REPO:$TAG
-          echo "auth=$REGISTRY/$AUTH_ECR_REPO:$TAG" >> $GITHUB_OUTPUT
-          echo "loader=$REGISTRY/$LOADER_ECR_REPO:$TAG" >> $GITHUB_OUTPUT
+          docker build -t $REGISTRY/$AUTH_ECR_REPOSITORY:$TAG .
+          docker push $REGISTRY/$AUTH_ECR_REPOSITORY:$TAG
+
+          docker build -f Dockerfile.realm-loader -t $REGISTRY/$LOADER_ECR_REPOSITORY:$TAG .
+          docker push $REGISTRY/$LOADER_ECR_REPOSITORY:$TAG
+
+          echo "auth=$REGISTRY/$AUTH_ECR_REPOSITORY:$TAG" >> $GITHUB_OUTPUT
+          echo "loader=$REGISTRY/$LOADER_ECR_REPOSITORY:$TAG" >> $GITHUB_OUTPUT
+
+  deploy-to-ecs:
+    runs-on: ubuntu-latest
+    needs: push-to-ecr
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
 
     
-      - name: Get auth task definition
+      - name: Fetch Latest Auth Task Definition
         run: |
-          aws ecs describe-task-definition --task-definition $AUTH_TASK_FAMILY \
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.AUTH_TASK_FAMILY }} \
             --query taskDefinition > auth-td.json
 
-      - id: render-auth
+      - name: Render Auth Task Definition
+        id: render-auth
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: auth-td.json
           container-name: ${{ env.AUTH_CONTAINER }}
-          image: ${{ steps.img.outputs.auth }}
+          image: ${{ needs.push-to-ecr.outputs.auth-image }}
 
-      - uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+      - name: Update Auth ECS Service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.render-auth.outputs.task-definition }}
           service: ${{ env.AUTH_SERVICE }}
           cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
+          wait-for-service-stability: false
 
-      - name: Get loader task definition
+     
+      - name: Fetch Latest Loader Task Definition
         run: |
-          aws ecs describe-task-definition --task-definition $LOADER_TASK_FAMILY \
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.LOADER_TASK_FAMILY }} \
             --query taskDefinition > loader-td.json
 
-      - id: render-loader
+      - name: Render Loader Task Definition
+        id: render-loader
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: loader-td.json
           container-name: ${{ env.LOADER_CONTAINER }}
-          image: ${{ steps.img.outputs.loader }}
+          image: ${{ needs.push-to-ecr.outputs.loader-image }}
 
-      - name: Register loader task definition and run it
+      - name: Register and Run Realm Loader
         env:
           TD_FILE: ${{ steps.render-loader.outputs.task-definition }}
         run: |
-          TD_ARN=$(aws ecs register-task-definition --cli-input-json file://$TD_FILE \
+          TD_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://$TD_FILE \
             --query taskDefinition.taskDefinitionArn --output text)
+
+          aws ecs describe-services \
+            --cluster $ECS_CLUSTER --services $AUTH_SERVICE \
+            --query 'services[0].networkConfiguration' --output json > network.json
 
           TASK_ARN=$(aws ecs run-task \
             --cluster $ECS_CLUSTER --launch-type FARGATE \
             --task-definition $TD_ARN \
-            --network-configuration "awsvpcConfiguration={subnets=[${{ vars.PRIVATE_SUBNETS }}],securityGroups=[${{ vars.LOADER_SG }}],assignPublicIp=DISABLED}" \
+            --network-configuration file://network.json \
             --query 'tasks[0].taskArn' --output text)
 
           aws ecs wait tasks-stopped --cluster $ECS_CLUSTER --tasks $TASK_ARN
