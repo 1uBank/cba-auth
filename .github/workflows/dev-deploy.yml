@@ -74,12 +74,7 @@ jobs:
         run: |
           docker build -t $REGISTRY/$AUTH_ECR_REPOSITORY:$TAG .
           docker push $REGISTRY/$AUTH_ECR_REPOSITORY:$TAG
-
-          docker build -f Dockerfile.realm-loader -t $REGISTRY/$LOADER_ECR_REPOSITORY:$TAG .
-          docker push $REGISTRY/$LOADER_ECR_REPOSITORY:$TAG
-
           echo "auth=$REGISTRY/$AUTH_ECR_REPOSITORY:$TAG" >> $GITHUB_OUTPUT
-          echo "loader=$REGISTRY/$LOADER_ECR_REPOSITORY:$TAG" >> $GITHUB_OUTPUT
 
   deploy-to-ecs:
     runs-on: ubuntu-latest
@@ -119,42 +114,5 @@ jobs:
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
 
+
      
-      - name: Fetch Latest Loader Task Definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ env.LOADER_TASK_FAMILY }} \
-            --query taskDefinition > loader-td.json
-
-      - name: Render Loader Task Definition
-        id: render-loader
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: loader-td.json
-          container-name: ${{ env.LOADER_CONTAINER }}
-          image: ${{ needs.push-to-ecr.outputs.loader-image }}
-
-      - name: Register and Run Realm Loader
-        env:
-          TD_FILE: ${{ steps.render-loader.outputs.task-definition }}
-        run: |
-          TD_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://$TD_FILE \
-            --query taskDefinition.taskDefinitionArn --output text)
-
-          aws ecs describe-services \
-            --cluster $ECS_CLUSTER --services $AUTH_SERVICE \
-            --query 'services[0].networkConfiguration' --output json > network.json
-
-          TASK_ARN=$(aws ecs run-task \
-            --cluster $ECS_CLUSTER --launch-type FARGATE \
-            --task-definition $TD_ARN \
-            --network-configuration file://network.json \
-            --query 'tasks[0].taskArn' --output text)
-
-          aws ecs wait tasks-stopped --cluster $ECS_CLUSTER --tasks $TASK_ARN
-
-          EXIT=$(aws ecs describe-tasks --cluster $ECS_CLUSTER --tasks $TASK_ARN \
-            --query "tasks[0].containers[?name=='$LOADER_CONTAINER'].exitCode | [0]" --output text)
-          echo "realm-loader exit code: $EXIT"
-          [ "$EXIT" = "0" ]
