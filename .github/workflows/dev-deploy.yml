@@ -112,7 +112,7 @@ jobs:
           task-definition: ${{ steps.render-auth.outputs.task-definition }}
           service: ${{ env.AUTH_SERVICE }}
           cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
+          wait-for-service-stability: false
 
 
      
