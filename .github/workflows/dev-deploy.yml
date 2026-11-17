@@ -13,6 +13,7 @@ env:
   LOADER_ECR_REPOSITORY: cba-core-dev-auth-realm-loader
   LOADER_TASK_FAMILY: cba-core-dev-auth-realm-loader
   LOADER_CONTAINER: realm-loader
+  DEPLOY_TIMEOUT_SECONDS: "900"
 
 jobs:
   test:
