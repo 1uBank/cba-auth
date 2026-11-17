@@ -1,61 +1,45 @@
-name: CBA Auth dev ECS CI/CD Pipeline
+name: CBA Auth – dev – build and deploy to ECS
 
 on:
   push:
-    branches:
-      - dev
-
-permissions:
-  id-token: write
-  contents: read
-
-concurrency:
-  group: cba-auth-dev
-  cancel-in-progress: false
+    branches: [dev]
 
 env:
   AWS_REGION: us-east-1
-  AWS_ROLE_ARN: arn:aws:iam::612457065814:role/github-actions-deploy
-  ECR_REPOSITORY: cba-core-dev-auth-api 
-  LOADER_ECR_REPOSITORY: cba-core-dev-auth-realm-loader
   ECS_CLUSTER: cba-core-dev
+  ECR_REPOSITORY: cba-core-dev-auth-api
   ECS_SERVICE: cba-core-dev-auth
-  AUTH_TASK_FAMILY: cba-core-dev-auth
   AUTH_CONTAINER: cba-auth
+  LOADER_ECR_REPOSITORY: cba-core-dev-auth-realm-loader
   LOADER_TASK_FAMILY: cba-core-dev-auth-realm-loader
   LOADER_CONTAINER: realm-loader
 
 jobs:
-  build:
+  test:
+    name: Build and test the user-migration plugin
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Use Java
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
           cache: maven
           cache-dependency-path: providers/cba-core-user-migration/pom.xml
 
-      - id: build
-        name: Build and verify plugin
+      - name: mvn verify
         run: mvn -B -f providers/cba-core-user-migration/pom.xml verify
 
   build-push:
-    name: Build image and push to ECR
-    needs: build
+    name: Build images and push to ECR
+    needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
     outputs:
-      image: ${{ steps.image.outputs.image }}
-
+      auth_image: ${{ steps.tags.outputs.auth_image }}
+      loader_image: ${{ steps.tags.outputs.loader_image }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -68,38 +52,47 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Compute image URI
-        id: image
+      - name: Compute image tags
+        id: tags
         run: |
-          IMAGE="${{ steps.ecr.outputs.registry }}/${ECR_REPOSITORY}:${GITHUB_SHA}"
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-          echo "Building image: $IMAGE"
+          REGISTRY="${{ steps.ecr.outputs.registry }}"
+          echo "auth_image=${REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "loader_image=${REGISTRY}/${LOADER_ECR_REPOSITORY}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push Docker image
+      - name: Build and push auth image
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: Dockerfile
           push: true
-          tags: ${{ steps.image.outputs.image }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          provenance: false
+          tags: ${{ steps.tags.outputs.auth_image }}
+          cache-from: type=gha,scope=auth
+          cache-to: type=gha,mode=max,scope=auth
 
+      - name: Build and push realm-loader image
+        if: vars.REALM_LOADER_ENABLED == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.realm-loader
+          push: true
+          provenance: false
+          tags: ${{ steps.tags.outputs.loader_image }}
+          cache-from: type=gha,scope=loader
+          cache-to: type=gha,mode=max,scope=loader
 
-  deploy-to-ecs:
-    name: Deploy to ECS
+  deploy-auth:
+    name: Deploy auth service to ECS
     needs: build-push
     runs-on: ubuntu-latest
-
+    timeout-minutes: 25
+    environment: dev
     env:
-      IMAGE: ${{ needs.build-push.outputs.image }}
-
+      IMAGE: ${{ needs.build-push.outputs.auth_image }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -107,89 +100,143 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Validate deployment configuration
+      - name: Fetch the task definition the service runs now
         run: |
-          if [ -z "$IMAGE" ]; then
-            echo "ERROR: Docker image URI is missing"
+          set -euo pipefail
+          [ -n "$IMAGE" ] || { echo "::error::Image URI is empty"; exit 1; }
+
+          TD_ARN=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].taskDefinition' --output text)
+          if [ -z "$TD_ARN" ] || [ "$TD_ARN" = "None" ]; then
+            echo "::error::Service $ECS_SERVICE not found in cluster $ECS_CLUSTER"; exit 1
+          fi
+          echo "Current task definition: $TD_ARN"
+
+          aws ecs describe-task-definition --task-definition "$TD_ARN" \
+            --query taskDefinition --output json > td-current.json
+
+      - name: Set the new image
+        run: |
+          set -euo pipefail
+          jq -e --arg c "$AUTH_CONTAINER" 'any(.containerDefinitions[]; .name == $c)' td-current.json >/dev/null || {
+            echo "::error::Container '$AUTH_CONTAINER' not in the task definition. Found: $(jq -r '[.containerDefinitions[].name] | join(", ")' td-current.json)"
+            exit 1
+          }
+
+          jq --arg image "$IMAGE" --arg c "$AUTH_CONTAINER" '
+            del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
+            | (.containerDefinitions[] | select(.name == $c) | .image) = $image
+          ' td-current.json > td-new.json
+
+      - name: Register task definition
+        id: register
+        run: |
+          set -euo pipefail
+          NEW_TD=$(aws ecs register-task-definition --cli-input-json file://td-new.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "New task definition: $NEW_TD"
+          echo "arn=$NEW_TD" >> "$GITHUB_OUTPUT"
+
+      - name: Update service
+        run: |
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+            --task-definition "${{ steps.register.outputs.arn }}" \
+            --query 'service.deployments[0].[id,status,rolloutState]' --output text
+
+      - name: Wait for the deployment to finish
+        env:
+          NEW_TD: ${{ steps.register.outputs.arn }}
+        run: |
+          set -uo pipefail
+          deadline=$((SECONDS + DEPLOY_TIMEOUT_SECONDS))
+          state=""
+          while [ $SECONDS -lt $deadline ]; do
+            dep=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --output json \
+              | jq -c --arg td "$NEW_TD" '.services[0].deployments[] | select(.taskDefinition == $td)')
+            if [ -z "$dep" ]; then
+              echo "::error::Deployment for $NEW_TD no longer exists (replaced by another deployment?)"; state=MISSING; break
+            fi
+            state=$(jq -r '.rolloutState // "UNKNOWN"' <<<"$dep")
+            echo "$(date -u +%T) rollout=$state running=$(jq .runningCount <<<"$dep")/$(jq .desiredCount <<<"$dep") failed=$(jq .failedTasks <<<"$dep")"
+            case "$state" in
+              COMPLETED) echo "Deployment completed."; exit 0 ;;
+              FAILED)    echo "::error::ECS marked the deployment FAILED: $(jq -r '.rolloutStateReason' <<<"$dep")"; break ;;
+            esac
+            sleep 20
+          done
+          [ "$state" = "IN_PROGRESS" ] && echo "::error::Timed out after ${DEPLOY_TIMEOUT_SECONDS}s"
+
+          echo "---- Recent service events ----"
+          aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].events[:10].[createdAt,message]' --output text
+          echo "---- Recently stopped tasks ----"
+          STOPPED=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" \
+            --desired-status STOPPED --max-results 5 --query 'taskArns' --output text)
+          if [ -n "$STOPPED" ] && [ "$STOPPED" != "None" ]; then
+            aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks $STOPPED \
+              --query 'tasks[].[stoppedReason, containers[0].reason, containers[0].exitCode]' --output text
+          fi
+          exit 1
+
+  realm-loader:
+    name: Apply realms (keycloak-config-cli)
+    needs: [build-push, deploy-auth]
+    if: vars.REALM_LOADER_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: dev
+    env:
+      IMAGE: ${{ needs.build-push.outputs.loader_image }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Register loader task definition with the new image
+        id: register
+        run: |
+          set -euo pipefail
+          aws ecs describe-task-definition --task-definition "$LOADER_TASK_FAMILY" \
+            --query taskDefinition --output json > loader-current.json
+          jq -e --arg c "$LOADER_CONTAINER" 'any(.containerDefinitions[]; .name == $c)' loader-current.json >/dev/null || {
+            echo "::error::Container '$LOADER_CONTAINER' not in $LOADER_TASK_FAMILY"; exit 1; }
+
+          jq --arg image "$IMAGE" --arg c "$LOADER_CONTAINER" '
+            del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
+            | (.containerDefinitions[] | select(.name == $c) | .image) = $image
+          ' loader-current.json > loader-new.json
+
+          ARN=$(aws ecs register-task-definition --cli-input-json file://loader-new.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Run the loader in the auth service's network and wait
+        run: |
+          set -euo pipefail
+          # Same subnets and security groups as the auth service, so it can reach the internal admin API.
+          aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].networkConfiguration' --output json > network.json
+
+          TASK=$(aws ecs run-task --cluster "$ECS_CLUSTER" --launch-type FARGATE \
+            --task-definition "${{ steps.register.outputs.arn }}" \
+            --network-configuration file://network.json \
+            --started-by "github-${GITHUB_RUN_ID}" \
+            --query 'tasks[0].taskArn' --output text)
+          [ -n "$TASK" ] && [ "$TASK" != "None" ] || { echo "::error::run-task did not start a task"; exit 1; }
+          echo "Started $TASK"
+
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK"
+
+          read -r EXIT REASON < <(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK" --output json \
+            | jq -r --arg c "$LOADER_CONTAINER" '.tasks[0] as $t
+                | ($t.containers[] | select(.name == $c) | .exitCode // "none") + " " + ($t.stoppedReason // "")')
+          echo "realm-loader exit code: $EXIT ($REASON)"
+          if [ "$EXIT" != "0" ]; then
+            echo "::error::Realm loader failed. Check its CloudWatch log stream for task ${TASK##*/}."
             exit 1
           fi
-
-          if [ -z "$ECS_CONTAINER_NAME" ]; then
-            echo "ERROR: ECS container name is missing"
-            exit 1
-          fi
-
-      - name: Fetch current ECS task definition
-        run: |
-          TASK_DEFINITION_ARN=$(aws ecs describe-services \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --query 'services[0].taskDefinition' \
-            --output text)
-
-          if [ -z "$TASK_DEFINITION_ARN" ] || [ "$TASK_DEFINITION_ARN" = "None" ]; then
-            echo "ERROR: ECS service or task definition not found"
-            exit 1
-          fi
-
-          echo "Current task definition: $TASK_DEFINITION_ARN"
-
-          aws ecs describe-task-definition \
-            --task-definition "$TASK_DEFINITION_ARN" \
-            --query 'taskDefinition' \
-            --output json > task-definition-original.json
-
-      - name: Update task definition image
-        run: |
-          jq -e --arg container "$ECS_CONTAINER_NAME" \
-            'any(.containerDefinitions[]; .name == $container)' \
-            task-definition-original.json > /dev/null || {
-              echo "ERROR: Container $ECS_CONTAINER_NAME not found"
-              exit 1
-            }
-
-          jq \
-            --arg image "$IMAGE" \
-            --arg container "$ECS_CONTAINER_NAME" \
-            'del(
-              .taskDefinitionArn,
-              .revision,
-              .status,
-              .requiresAttributes,
-              .compatibilities,
-              .registeredAt,
-              .registeredBy
-            ) |
-            (.containerDefinitions[] |
-              select(.name == $container).image) = $image' \
-            task-definition-original.json > task-definition.json
-
-          echo "Updated image: $IMAGE"
-
-      - name: Register new ECS task definition
-        id: task-definition
-        run: |
-          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://task-definition.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --output text)
-
-          if [ -z "$NEW_TASK_DEF_ARN" ] || [ "$NEW_TASK_DEF_ARN" = "None" ]; then
-            echo "ERROR: Failed to register task definition"
-            exit 1
-          fi
-
-          echo "task_definition_arn=$NEW_TASK_DEF_ARN" >> "$GITHUB_OUTPUT"
-
-          echo "New task definition: $NEW_TASK_DEF_ARN"
-
-      - name: Update ECS service
-        run: |
-          aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --task-definition "${{ steps.task-definition.outputs.task_definition_arn }}" \
-            --force-new-deployment
-
-
-     
