@@ -39,7 +39,7 @@ final class CbaCoreMigrationClient {
     /** The staff member as CBA-CORE holds them, if they exist and may be migrated. */
     Optional<CbaCoreStaff> find(String username, String clientSecret) {
         try {
-            HttpResponse<String> response = send(request("/staff-migration/" + encode(username), clientSecret).GET());
+            HttpResponse<String> response = send(request("/oneubank/staff-migration/" + encode(username), clientSecret).GET());
             if (response.statusCode() == 404) {
                 return Optional.empty();
             }
@@ -60,7 +60,7 @@ final class CbaCoreMigrationClient {
     boolean verifyPassword(String username, String password, String clientSecret) {
         try {
             String body = JsonSerialization.writeValueAsString(Map.of("password", password));
-            HttpResponse<String> response = send(request("/staff-migration/" + encode(username) + "/verify", clientSecret)
+            HttpResponse<String> response = send(request("/oneubank/staff-migration/" + encode(username) + "/verify", clientSecret)
                     .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)));
             if (response.statusCode() != 200) {
                 LOG.warnf("CBA-CORE returned %d when checking the password of staff user %s", response.statusCode(), username);
