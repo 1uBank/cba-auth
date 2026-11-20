@@ -8,9 +8,13 @@ ARG CONFIG_CLI_VERSION=6.5.1-26
 FROM adorsys/keycloak-config-cli:${CONFIG_CLI_VERSION}
 
 COPY realms/ /config/
+COPY --chmod=755 docker/realm-loader-start.sh /opt/realm-loader/start.sh
 
 # Fixed settings, the same on every environment.
 ENV IMPORT_FILES_LOCATIONS=/config/*.yaml \
     IMPORT_VARSUBSTITUTION_ENABLED=true \
     KEYCLOAK_AVAILABILITYCHECK_ENABLED=true \
     KEYCLOAK_AVAILABILITYCHECK_TIMEOUT=180s
+
+# Refuses to start without a valid PORTAL_URL, then runs keycloak-config-cli as the base image does.
+ENTRYPOINT ["/bin/sh", "/opt/realm-loader/start.sh"]

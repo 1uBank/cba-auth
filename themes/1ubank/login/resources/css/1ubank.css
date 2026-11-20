@@ -1,25 +1,28 @@
 /*
  * 1UBank sign-in theme for the auth service.
  *
- * Keycloak's keycloak.v2 login page with 1UBank's logo and colours. It is deliberately
- * plainer than the back-office portal's own login screen: a single sign-in card, so staff
- * can tell the sign-in step apart from the portal itself.
+ * Keycloak's keycloak.v2 login page in 1UBank's colours. The page is deep navy with a white logo and a
+ * single white sign-in card, so the sign-in step looks clearly different from the back-office portal,
+ * whose screens are light.
  */
 
 :root {
   --ub-blue: #2237b3;
+  --ub-blue-600: #3149d1;
   --ub-blue-800: #18288a;
   --ub-blue-950: #0a1350;
+  --ub-navy: #070c33;
   --ub-ink: #0e1430;
   --ub-ink-2: #4a5272;
-  --ub-surface: #f5f6fb;
+  --ub-on-dark: #c9cfef;
+  --ub-on-dark-2: #8e97c7;
   --ub-border: #e0e3f0;
   --ub-font: 'Helvetica Neue', Helvetica, Arial, sans-serif;
 
-  --keycloak-logo-url: url('../img/logo-horizontal.svg');
+  --keycloak-logo-url: url('../img/logo-horizontal-white.svg');
   --keycloak-logo-height: 44px;
   --keycloak-logo-width: 190px;
-  --keycloak-card-top-color: var(--ub-blue);
+  --keycloak-card-top-color: var(--ub-blue-600);
 
   --pf-v5-global--FontFamily--text: var(--ub-font);
   --pf-v5-global--FontFamily--heading: var(--ub-font);
@@ -33,11 +36,24 @@
   --pf-v5-c-button--m-primary--active--BackgroundColor: var(--ub-blue-950);
 }
 
-/* Plain light background instead of Keycloak's dark artwork. */
+/* Deep navy page: a soft brand-blue glow at the top, fading to near-black navy. */
 .login-pf body {
-  background: var(--ub-surface);
+  min-height: 100vh;
+  background-color: var(--ub-navy);
+  background-image:
+    radial-gradient(60rem 32rem at 50% -8rem, rgb(49 73 209 / 55%), transparent 70%),
+    radial-gradient(40rem 24rem at 100% 100%, rgb(34 55 179 / 25%), transparent 70%),
+    linear-gradient(180deg, var(--ub-blue-950) 0%, var(--ub-navy) 60%);
+  background-attachment: fixed;
   font-family: var(--ub-font);
   font-variant-numeric: tabular-nums;
+}
+
+.pf-v5-c-login {
+  background: transparent;
+  /* Keycloak centres the card vertically, which leaves it low on tall screens; start near the top instead. */
+  align-items: flex-start;
+  padding-block-start: clamp(1.5rem, 7vh, 4.5rem);
 }
 
 .pf-v5-c-login__container {
@@ -45,13 +61,18 @@
 }
 
 .pf-v5-c-login__header {
+  padding-block-start: 0;
   padding-block-end: 1.5rem;
 }
 
+/* The white sign-in card, lifted off the dark page. */
 .pf-v5-c-login__main {
-  border: 1px solid var(--ub-border);
-  border-radius: 12px;
-  box-shadow: 0 6px 20px rgb(10 19 80 / 10%);
+  background-color: #fff;
+  border: 0;
+  border-radius: 14px;
+  box-shadow:
+    0 24px 60px rgb(0 0 0 / 45%),
+    0 2px 6px rgb(0 0 0 / 25%);
   overflow: hidden;
 }
 
@@ -63,4 +84,39 @@
 
 .pf-v5-c-login__main-footer-band {
   color: var(--ub-ink-2);
+  background-color: #f5f6fb;
+}
+
+/* Anything Keycloak places on the page itself, outside the card, is set for the dark background. */
+.pf-v5-c-login__footer,
+.pf-v5-c-login__footer a,
+#kc-locale .pf-v5-c-menu-toggle {
+  color: var(--ub-on-dark);
+}
+
+.pf-v5-c-login__footer a:hover {
+  color: #fff;
+}
+
+/* A short line under the card, so the page reads as 1UBank's own sign-in. */
+.pf-v5-c-login__container::after {
+  content: 'Authorised 1UBank staff only. Sign-ins are monitored.';
+  grid-column: 1 / -1;
+  justify-self: center;
+  margin-block-start: 1.25rem;
+  color: var(--ub-on-dark-2);
+  font-size: 0.8rem;
+  letter-spacing: 0.01em;
+}
+
+/* Phones: keep a 16px margin around the card and the line under it. */
+@media (max-width: 600px) {
+  .pf-v5-c-login__main {
+    margin-inline: 1rem;
+  }
+
+  .pf-v5-c-login__container::after {
+    padding-inline: 1rem;
+    text-align: center;
+  }
 }

@@ -39,10 +39,14 @@ Admins manage staff only in CBA-CORE's user screen. Two things keep the `cba` re
 
 | | What it does | Where |
 |---|---|---|
-| Sync | Creates, updates and disables the staff user here whenever an admin changes them in CBA-CORE | `cba-core`: package `org.apache.fineract.oneubank.authsync` in `fineract-provider`, client `user-provisioner` |
-| First-login migration | A staff member this realm does not know yet signs in with their CBA-CORE username and password. The plugin checks it with CBA-CORE, saves it here, and asks for an authenticator app. Later logins never involve CBA-CORE | `providers/cba-core-user-migration`, client `user-migrator` |
+| Sync | Creates, updates and disables the staff user here whenever an admin changes them in CBA-CORE. New staff, and staff whose password an admin resets in CBA-CORE, are linked to the first-login migration, so their next sign-in checks the password CBA-CORE holds | `cba-core`: package `org.apache.fineract.oneubank.authsync` in `fineract-provider`, client `user-provisioner` |
+| First-login migration | A staff member this realm does not know yet, or one linked by the sync, signs in with their CBA-CORE username and password. The plugin checks it with CBA-CORE, then the staff member chooses their own password and sets up an authenticator app. Later sign-ins never involve CBA-CORE | `providers/cba-core-user-migration`, client `user-migrator` |
 
-The first-login migration stays on in every environment. It moves existing staff across at their first login, and also catches anyone the sync missed while the auth service was unreachable. It needs a CBA-CORE user named `service-account-user-migrator`, with no roles; CBA-CORE's migration endpoints accept only this user.
+The first-login migration stays on in every environment. It moves existing staff across at their first login, and also catches anyone the sync missed while the auth service was unreachable. It only acts during a sign-in: lookups through the admin API (for example the sync checking whether a user exists) never add users. It calls CBA-CORE's `/v1/oneubank/staff-migration` endpoints, which exist when CBA-CORE's sync is on and accept only the CBA-CORE user `service-account-user-migrator` (no roles).
+
+Admins also reset a staff member's authenticator app (after a lost phone) and lift a lock-out (5 failed attempts) from the staff member's page in the portal; CBA-CORE makes the change here. Staff change their own password and authenticator in the account console. Self-service password reset ("Forgot Password?") is off, because the realm has no email (SMTP).
+
+Portal access tokens last 5 minutes (`access.token.lifespan` on the `portal` client); the portal renews them while the session lasts. CBA-CORE checks a token's signature and expiry only, so this bounds how long a token stays usable after sign-out.
 
 ## Theme
 
@@ -54,7 +58,7 @@ The first-login migration stays on in every environment. It moves existing staff
 | Account console (staff change their password and authenticator) | `cba`, `master` | `account/`: logo on Keycloak's `keycloak.v3` account console |
 | Admin console | `master` | `admin/`: white logo on Keycloak's `keycloak.v2` admin console |
 
-The sign-in page is deliberately plainer than the back-office portal's own login screen. Locally the theme folder is mounted into the container, so edits show on page refresh.
+The sign-in page is deep navy with a white logo and a single white card, so staff can tell the sign-in step apart from the back-office portal, whose screens are light. Locally the theme folder is mounted into the container, so edits show on page refresh.
 
 ## Run locally
 
@@ -100,7 +104,7 @@ The first-login migration plugin also reads `CBA_CORE_MIGRATION_TENANT` (default
 
 **Realm loader**
 
-The realm loader is a separate, short-lived container (`adorsys/keycloak-config-cli:6.5.1-26`) that runs after each deploy. It signs in to the auth service's admin API and creates or updates the realms, clients and scopes in `realms/*.yaml`, then exits.
+The realm loader is a separate, short-lived container, built from `Dockerfile.realm-loader` on `adorsys/keycloak-config-cli:6.5.1-26`, that runs after each deploy. It signs in to the auth service's admin API and creates or updates the realms, clients and scopes in `realms/*.yaml`, then exits. It refuses to start, exiting 1, unless `PORTAL_URL` is an `http(s)://` address without a trailing `/`; without the check, a missing value imports as an empty string and the portal can no longer sign in.
 
 Fixed settings, the same on every environment:
 

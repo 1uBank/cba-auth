@@ -6,6 +6,7 @@ import org.keycloak.credential.CredentialInput;
 import org.keycloak.credential.CredentialInputValidator;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.KeycloakSession;
+import org.keycloak.models.KeycloakUriInfo;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserCredentialModel;
 import org.keycloak.models.UserModel;
@@ -49,6 +50,11 @@ public class CbaCoreUserMigrationProvider
         if (local.getUserByUsername(realm, username) != null) {
             return null;
         }
+        // Only a sign-in moves a staff member across. The admin API also looks usernames up, for example before
+        // CBA-CORE's staff sync creates a user; adding the user there made that create fail with 409.
+        if (isAdminApiRequest()) {
+            return null;
+        }
         String secret = migratorSecret(realm);
         if (secret == null) {
             return null;
@@ -60,6 +66,8 @@ public class CbaCoreUserMigrationProvider
             user.setFirstName(staff.firstName());
             user.setLastName(staff.lastName());
             user.setFederationLink(model.getId());
+            // The CBA-CORE password gets them in once; they then choose their own and set up an authenticator.
+            user.addRequiredAction(UserModel.RequiredAction.UPDATE_PASSWORD);
             user.addRequiredAction(UserModel.RequiredAction.CONFIGURE_TOTP);
             LOG.infof("Staff user %s found in CBA-CORE and added to realm %s for first-login migration", staff.username(),
                     realm.getName());
@@ -114,6 +122,12 @@ public class CbaCoreUserMigrationProvider
     public boolean removeUser(RealmModel realm, UserModel user) {
         // Lets an admin delete a staff user who has not finished migrating. Nothing is removed from CBA-CORE.
         return true;
+    }
+
+    /** Whether this lookup comes from the admin API (paths under {@code /admin/realms/}) rather than a sign-in. */
+    private boolean isAdminApiRequest() {
+        KeycloakUriInfo uri = session.getContext().getUri();
+        return uri != null && uri.getRequestUri() != null && uri.getRequestUri().getRawPath().contains("/admin/");
     }
 
     /** The secret the realm holds for the migrator client, read on each use so a regenerated secret applies at once. */

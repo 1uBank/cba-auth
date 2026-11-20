@@ -51,6 +51,13 @@
             <version>${keycloak.version}</version>
             <scope>provided</scope>
         </dependency>
+        <!-- The request URI, to tell sign-ins from admin API calls. Same version as the auth service ships. -->
+        <dependency>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+            <version>3.1.0</version>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 
     <build>

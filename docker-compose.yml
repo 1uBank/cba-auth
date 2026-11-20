@@ -41,7 +41,10 @@ services:
         condition: service_healthy
 
   realm-loader:
-    image: adorsys/keycloak-config-cli:6.5.1-26
+    # The same image as on ECS, so its PORTAL_URL check runs here too.
+    build:
+      context: .
+      dockerfile: Dockerfile.realm-loader
     environment:
       KEYCLOAK_URL: http://auth:8080
       KEYCLOAK_USER: ${KC_BOOTSTRAP_ADMIN_USERNAME}

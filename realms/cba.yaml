@@ -7,7 +7,8 @@ displayNameHtml: <div class="kc-logo-text"><span>1UBank</span></div>
 enabled: true
 sslRequired: external
 registrationAllowed: false
-resetPasswordAllowed: true
+# No self-service reset: it emails a link, and the realm has no email (SMTP). Admins reset staff passwords in the portal.
+resetPasswordAllowed: false
 bruteForceProtected: true
 failureFactor: 5
 accessTokenLifespan: 900
@@ -118,6 +119,9 @@ clients:
     attributes:
       pkce.code.challenge.method: S256
       post.logout.redirect.uris: $(env:PORTAL_URL)/*
+      # Staff tokens last 5 minutes; the portal renews them in the background while the session lasts. CBA-CORE
+      # checks a token's signature and expiry only, so this bounds how long one stays usable after logout.
+      access.token.lifespan: "300"
     defaultClientScopes:
       - profile
       - email
@@ -216,6 +220,8 @@ users:
         - manage-users
         - view-users
         - query-users
+        # Read-only realm settings: to find the first-login migration, which new staff are linked to.
+        - view-realm
 
 # With full scope off, a token carries only the roles mapped here.
 clientScopeMappings:
@@ -225,3 +231,4 @@ clientScopeMappings:
         - manage-users
         - view-users
         - query-users
+        - view-realm
