@@ -128,6 +128,12 @@ docker build -f Dockerfile.realm-loader -t <registry>/cba-auth-realm-loader:<git
 
 On ECS, run it as a one-off task (task definition with this image and the variables below), once the new auth service is healthy, and fail the deploy if the task's container exits non-zero. It needs network access to the auth service's internal URL.
 
+The dev pipeline (`.github/workflows/dev-deploy.yml`) builds and runs the loader only when the GitHub repository variable `REALM_LOADER_ENABLED` is `true` (_Settings > Secrets and variables > Actions > Variables_). Without it, both steps are skipped: the auth service deploys, but changes to `realms/*.yaml` never reach the environment. Set it once the loader's ECR repository and task definition (`cba-core-dev-auth-realm-loader`, container `realm-loader`) exist:
+
+```
+gh variable set REALM_LOADER_ENABLED --body true --repo 1uBank/cba-auth
+```
+
 Per environment:
 
 | Variable | Value | Secret |
